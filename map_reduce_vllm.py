@@ -1,4 +1,5 @@
 import argparse
+from collections.abc import Callable
 from pathlib import Path
 
 import tiktoken
@@ -111,7 +112,7 @@ def convert_transcript_to_split_docs(
     chunk_size: int,
     overlap_size: int,
 ) -> list[Document]:
-    docs = [Document(page_content=transcript)]
+    docs = [Document(page_content=transcript)] # 把 transcript 包裝成 LangChain 能理解的 Document 格式
     text_splitter = get_text_splitter(chunk_size=chunk_size, overlap_size=overlap_size)
     return text_splitter.split_documents(docs)
 
@@ -146,6 +147,8 @@ def reduce_summaries(
     max_model_len: int,
     token_safety_margin: int,
     min_output_tokens: int,
+    on_reduce_progress: Callable[[int, int, int], None] | None = None,
+    on_reduce_result: Callable[[int, int, str], None] | None = None,
 ) -> str:
     current_round = [s for s in summaries if s.strip()]
     if not current_round:
@@ -194,6 +197,10 @@ def reduce_summaries(
                 next_round.append(reduced_output)
                 i += local_batch_size
                 pbar.update(local_batch_size)
+                if on_reduce_progress:
+                    on_reduce_progress(round_index, i, len(current_round))
+                if on_reduce_result:
+                    on_reduce_result(round_index, len(next_round), reduced_output)
                 reduced = True
                 break
 
@@ -226,6 +233,10 @@ def run_map_reduce(
     max_model_len: int,
     token_safety_margin: int,
     min_output_tokens: int,
+    on_map_progress: Callable[[int, int], None] | None = None,
+    on_reduce_progress: Callable[[int, int, int], None] | None = None,
+    on_map_result: Callable[[int, int, str], None] | None = None,
+    on_reduce_result: Callable[[int, int, str], None] | None = None,
 ) -> str:
     split_docs = convert_transcript_to_split_docs(
         transcript=transcript,
@@ -277,6 +288,10 @@ def run_map_reduce(
 
         mapped_output = normalize_output_script(mapped_output, language_hint)
         summaries.append(mapped_output)
+        if on_map_progress:
+            on_map_progress(len(summaries), len(split_docs))
+        if on_map_result:
+            on_map_result(len(summaries), len(split_docs), mapped_output)
 
     output = reduce_summaries(
         summaries=summaries,
@@ -292,6 +307,8 @@ def run_map_reduce(
         max_model_len=max_model_len,
         token_safety_margin=token_safety_margin,
         min_output_tokens=min_output_tokens,
+        on_reduce_progress=on_reduce_progress,
+        on_reduce_result=on_reduce_result,
     )
 
     output = normalize_output_script(output, language_hint)

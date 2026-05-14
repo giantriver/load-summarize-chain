@@ -56,24 +56,63 @@ if st.button("Summarize", type="primary"):
     if not input_text.strip():
         st.warning("Please paste some text first.")
     else:
-        with st.spinner("Summarizing..."):
-            try:
-                summary = run_map_reduce(
-                    transcript=input_text,
-                    model=model,
-                    base_url=base_url,
-                    api_key="EMPTY",
-                    chunk_size=400,
-                    overlap_size=0,
-                    temperature=0.5,
-                    map_max_tokens=192,
-                    combine_max_tokens=384,
-                    combine_batch_size=3,
-                    max_model_len=1024,
-                    token_safety_margin=96,
-                    min_output_tokens=64,
-                )
-                st.subheader("Summary")
-                st.write(summary)
-            except Exception as exc:
-                st.error(f"Summarization failed: {exc}")
+        st.subheader("Progress")
+        map_label = st.empty()
+        map_bar = st.progress(0)
+        reduce_label = st.empty()
+        reduce_bar = st.progress(0)
+
+        with st.expander("Mapping results (intermediate)", expanded=False):
+            map_results_container = st.container()
+
+        with st.expander("Reduce results (intermediate)", expanded=False):
+            reduce_results_container = st.container()
+
+        def on_map_progress(current: int, total: int) -> None:
+            map_label.markdown(f"**Mapping:** chunk {current} / {total}")
+            map_bar.progress(current / total)
+
+        def on_map_result(index: int, total: int, text: str) -> None:
+            with map_results_container:
+                st.markdown(f"**Chunk {index} / {total}**")
+                st.markdown(text)
+                st.divider()
+
+        def on_reduce_progress(round_index: int, current: int, total: int) -> None:
+            reduce_label.markdown(f"**Reducing round {round_index}:** {current} / {total}")
+            reduce_bar.progress(current / total)
+
+        def on_reduce_result(round_index: int, batch_index: int, text: str) -> None:
+            with reduce_results_container:
+                st.markdown(f"**Round {round_index} — batch {batch_index}**")
+                st.markdown(text)
+                st.divider()
+
+        try:
+            summary = run_map_reduce(
+                transcript=input_text,
+                model=model,
+                base_url=base_url,
+                api_key="EMPTY",
+                chunk_size=400,
+                overlap_size=0,
+                temperature=0.5,
+                map_max_tokens=192,
+                combine_max_tokens=384,
+                combine_batch_size=3,
+                max_model_len=1024,
+                token_safety_margin=96,
+                min_output_tokens=64,
+                on_map_progress=on_map_progress,
+                on_reduce_progress=on_reduce_progress,
+                on_map_result=on_map_result,
+                on_reduce_result=on_reduce_result,
+            )
+            map_label.markdown("**Mapping:** done ✓")
+            map_bar.progress(1.0)
+            reduce_label.markdown("**Reducing:** done ✓")
+            reduce_bar.progress(1.0)
+            st.subheader("Summary")
+            st.write(summary)
+        except Exception as exc:
+            st.error(f"Summarization failed: {exc}")

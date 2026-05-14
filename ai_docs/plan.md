@@ -1,8 +1,8 @@
-# Streamlit 最精簡版計畫（貼文字直接摘要）
+# Streamlit UI 計畫（貼文字直接摘要）
 
 ## 目標
 
-做一個最小可用的 UI：貼入文字，按按鈕，回傳摘要。
+做一個可用的 UI：貼入文字，按按鈕，回傳摘要，並即時顯示 Map-Reduce 過程。
 
 ---
 
@@ -10,7 +10,7 @@
 
 1. 前端用 Streamlit。
 2. 後端直接呼叫 vLLM 的 OpenAI-compatible API。
-3. 單頁面、單模型、單輸出區塊，不加進階功能。
+3. 單頁面，支援動態模型選擇，即時顯示 mapping / reduce 進度與中途摘要。
 
 ---
 
@@ -56,19 +56,23 @@ uv add streamlit
 
 ---
 
-## Step 3：建立最小 UI 腳本
+## Step 3：UI 腳本（app_streamlit.py）
 
-新增檔案：app_streamlit.py
+### 輸入區
+- 多行文字輸入框（貼文字）。
+- vLLM Base URL 輸入欄（預設 `http://localhost:8000/v1`）。
 
-功能只做三件事：
-1. 一個多行輸入框（貼文字）。
-2. 一個按鈕（開始摘要）。
-3. 一個輸出區（顯示摘要）。
+### 模型選擇
+- 自動從 vLLM `/v1/models` 取得模型清單（有快取，可手動 Reload）。
+- 下拉選單選擇模型；可勾選「Use custom model name」改用手動輸入的模型名稱。
 
-摘要流程：
-1. 讀取輸入文字。
-2. 呼叫現有摘要邏輯（或直接呼叫 vLLM）。
-3. 顯示回傳結果。
+### 摘要執行
+- 按下 **Summarize** 後顯示：
+  1. **Mapping 進度條**：顯示 `chunk N / total`，完成後標示 done ✓。
+  2. **Reducing 進度條**：顯示 `round N — M / total`，完成後標示 done ✓。
+  3. **Mapping results（可折疊）**：每個 chunk 完成後即時附加該 chunk 的摘要。
+  4. **Reduce results（可折疊）**：每個 reduce batch 完成後即時附加合併摘要。
+- 全部完成後顯示最終摘要。
 
 ---
 
@@ -86,7 +90,8 @@ uv run streamlit run app_streamlit.py
 
 1. 可開啟 Streamlit 頁面。
 2. 貼入一段文字可成功回傳摘要。
-3. 不需 notebook、不需手動改程式碼參數。
+3. 摘要過程中可即時看到 mapping / reduce 進度條與中途產生的摘要。
+4. 不需 notebook、不需手動改程式碼參數。
 
 ---
 
