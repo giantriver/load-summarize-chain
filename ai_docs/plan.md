@@ -27,14 +27,14 @@ docker run --rm -it --gpus all ^
   --host 0.0.0.0 ^
   --port 8000 ^
   --gpu-memory-utilization 0.82 ^
-  --max-model-len 1024
+  --max-model-len 2048
 ```
 
 說明：
 1. `Qwen2.5-1.5B-Instruct` 比 0.5B 品質更好，且比 3B 更容易在中小顯存啟動。
-2. 你目前遇到的是 KV cache 記憶體不足，`max-model-len 2048` 在此環境太吃記憶體。
+2. `max-model-len 2048` 讓 Reduce 階段有足夠的 context window 合併多份摘要，避免無限迴圈。
 3. 你目前實際可用顯存約為 6.85/7.96 GiB，`gpu_memory_utilization` 必須低於這個比例，故先用 `0.82`。
-4. 若仍啟動失敗，先關閉其他占用 GPU 的程式；再不行就降回 `Qwen/Qwen2.5-0.5B-Instruct`。
+4. 若啟動失敗（KV cache 不足），先嘗試降回 `--max-model-len 1024` 並同時降低 `--gpu-memory-utilization 0.75`；再不行就降回 `Qwen/Qwen2.5-0.5B-Instruct`。
 
 驗證：
 

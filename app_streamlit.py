@@ -1,5 +1,4 @@
 import streamlit as st
-import requests
 
 from map_reduce_vllm import run_map_reduce
 
@@ -8,49 +7,40 @@ st.title("Text Summarizer")
 st.caption("Paste text and get a summary via vLLM")
 
 
-@st.cache_data(ttl=30)
-def fetch_models(base_url: str) -> list[str]:
-    url = base_url.rstrip("/") + "/models"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    payload = response.json()
-    data = payload.get("data", [])
-    model_ids = [item.get("id", "") for item in data if item.get("id")]
-    return sorted(model_ids)
+def fetch_current_model(base_url: str) -> str | None:
+    try:
+        import requests
+        url = base_url.rstrip("/") + "/models"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json().get("data", [])
+        ids = [item.get("id", "") for item in data if item.get("id")]
+        return ids[0] if ids else None
+    except Exception:
+        return None
 
 input_text = st.text_area("Input text", height=280, placeholder="Paste your text here...")
 
-col1, col2 = st.columns(2)
-with col1:
-    default_model = "Qwen/Qwen2.5-0.5B-Instruct"
-with col2:
-    base_url = st.text_input("Base URL", value="http://localhost:8000/v1")
+base_url = st.text_input("Base URL", value="http://localhost:8000/v1")
 
-left, right = st.columns([1, 1])
-with left:
-    refresh_models = st.button("Reload model list")
-with right:
-    use_custom_model = st.checkbox("Use custom model name", value=False)
+model = fetch_current_model(base_url) or "Qwen/Qwen2.5-0.5B-Instruct"
+st.caption(f"Model: `{model}`")
 
-if refresh_models:
-    fetch_models.clear()
-
-models: list[str] = []
-model_load_error = None
-try:
-    models = fetch_models(base_url)
-except Exception as exc:
-    model_load_error = str(exc)
-
-if model_load_error:
-    st.warning(f"Cannot load models from vLLM: {model_load_error}")
-
-if not models:
-    models = [default_model]
-
-selected_model = st.selectbox("Model", options=models, index=0)
-custom_model = st.text_input("Custom model", value=selected_model, disabled=not use_custom_model)
-model = custom_model.strip() if use_custom_model else selected_model
+with st.expander("Advanced settings", expanded=False):
+    adv_col1, adv_col2, adv_col3 = st.columns(3)
+    with adv_col1:
+        chunk_size = st.number_input("Chunk size (tokens)", min_value=100, max_value=2000, value=600, step=50)
+    with adv_col2:
+        overlap_size = st.number_input("Overlap size (tokens)", min_value=0, max_value=500, value=0, step=10)
+    with adv_col3:
+        combine_batch_size = st.number_input("Combine batch size", min_value=2, max_value=20, value=6, step=1)
+    adv_col4, adv_col5, adv_col6 = st.columns(3)
+    with adv_col4:
+        map_max_tokens = st.number_input("Map max tokens", min_value=32, max_value=512, value=256, step=16)
+    with adv_col5:
+        combine_max_tokens = st.number_input("Combine max tokens", min_value=32, max_value=512, value=512, step=16)
+    with adv_col6:
+        max_model_len = st.number_input("Max model len", min_value=256, max_value=8192, value=1024, step=256)
 
 if st.button("Summarize", type="primary"):
     if not input_text.strip():
@@ -94,13 +84,13 @@ if st.button("Summarize", type="primary"):
                 model=model,
                 base_url=base_url,
                 api_key="EMPTY",
-                chunk_size=400,
-                overlap_size=0,
+                chunk_size=chunk_size,
+                overlap_size=overlap_size,
                 temperature=0.5,
-                map_max_tokens=192,
-                combine_max_tokens=384,
-                combine_batch_size=3,
-                max_model_len=1024,
+                map_max_tokens=map_max_tokens,
+                combine_max_tokens=combine_max_tokens,
+                combine_batch_size=combine_batch_size,
+                max_model_len=max_model_len,
                 token_safety_margin=96,
                 min_output_tokens=64,
                 on_map_progress=on_map_progress,

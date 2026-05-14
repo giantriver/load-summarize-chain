@@ -164,7 +164,7 @@ def reduce_summaries(
             local_batch_size = min(combine_batch_size, len(current_round) - i)
             reduced = False
 
-            while local_batch_size >= 1:
+            while local_batch_size >= 2:
                 group = current_round[i : i + local_batch_size]
                 combined_text = "\n".join(group)
                 full_prompt = combine_prompt.format_prompt(
