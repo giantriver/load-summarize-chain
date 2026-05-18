@@ -1,3 +1,5 @@
+import time
+
 import streamlit as st
 
 from map_reduce_vllm import run_map_reduce
@@ -38,9 +40,9 @@ with st.expander("Advanced settings", expanded=False):
     with adv_col4:
         map_max_tokens = st.number_input("Map max tokens", min_value=32, max_value=512, value=256, step=16)
     with adv_col5:
-        combine_max_tokens = st.number_input("Combine max tokens", min_value=32, max_value=512, value=512, step=16)
+        combine_max_tokens = st.number_input("Combine max tokens", min_value=32, max_value=2048, value=512, step=16)
     with adv_col6:
-        max_model_len = st.number_input("Max model len", min_value=256, max_value=8192, value=1024, step=256)
+        max_model_len = st.number_input("Max model len", min_value=256, max_value=8192, value=4096, step=256)
 
 if st.button("Summarize", type="primary"):
     if not input_text.strip():
@@ -52,13 +54,26 @@ if st.button("Summarize", type="primary"):
         reduce_label = st.empty()
         reduce_bar = st.progress(0)
 
+        chunks_expander = st.empty()
+
         with st.expander("Mapping results (intermediate)", expanded=False):
             map_results_container = st.container()
 
         with st.expander("Reduce results (intermediate)", expanded=False):
             reduce_results_container = st.container()
 
+        timings: dict[str, float] = {}
+
+        def on_chunks(chunks: list[str]) -> None:
+            with chunks_expander.expander(f"Chunk contents (original) — {len(chunks)} chunks", expanded=False):
+                for i, text in enumerate(chunks, start=1):
+                    st.markdown(f"**Chunk {i} / {len(chunks)}**")
+                    st.text(text)
+                    st.divider()
+
         def on_map_progress(current: int, total: int) -> None:
+            if "map_start" not in timings:
+                timings["map_start"] = time.time()
             map_label.markdown(f"**Mapping:** chunk {current} / {total}")
             map_bar.progress(current / total)
 
@@ -69,6 +84,8 @@ if st.button("Summarize", type="primary"):
                 st.divider()
 
         def on_reduce_progress(round_index: int, current: int, total: int) -> None:
+            if "reduce_start" not in timings:
+                timings["reduce_start"] = time.time()
             reduce_label.markdown(f"**Reducing round {round_index}:** {current} / {total}")
             reduce_bar.progress(current / total)
 
@@ -97,10 +114,14 @@ if st.button("Summarize", type="primary"):
                 on_reduce_progress=on_reduce_progress,
                 on_map_result=on_map_result,
                 on_reduce_result=on_reduce_result,
+                on_chunks=on_chunks,
             )
-            map_label.markdown("**Mapping:** done ✓")
+            timings["end"] = time.time()
+            map_elapsed = timings.get("reduce_start", timings["end"]) - timings.get("map_start", timings["end"])
+            reduce_elapsed = timings["end"] - timings.get("reduce_start", timings["end"])
+            map_label.markdown(f"**Mapping:** done ✓ ({map_elapsed:.1f}s)")
             map_bar.progress(1.0)
-            reduce_label.markdown("**Reducing:** done ✓")
+            reduce_label.markdown(f"**Reducing:** done ✓ ({reduce_elapsed:.1f}s)")
             reduce_bar.progress(1.0)
             st.subheader("Summary")
             st.write(summary)

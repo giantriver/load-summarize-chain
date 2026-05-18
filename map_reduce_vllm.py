@@ -15,7 +15,7 @@ try:
 except Exception:
     OpenCC = None
 
-MAP_TEMPLATE_TXT = """Write a detailed summary of this text section in bullet points.
+MAP_TEMPLATE_TXT = """Write a detail summary of this text section in bullet points.
 Use '-' for bullet points and answer only the bullet points.
 You must write the summary strictly in this language: {language_hint}.
 Do not switch languages unless the input itself is mixed-language content.
@@ -25,15 +25,15 @@ Text:
 
 SUMMARY:"""
 
-COMBINE_TEMPLATE_TXT = """Combine these summaries into a final summary in bullet points.
-Use '-' for bullet points and answer only the bullet points.
-You must write the final summary strictly in this language: {language_hint}.
-Use the source text language preference, not the intermediate summary language.
+COMBINE_TEMPLATE_TXT = """Condense and compress the following summaries into a shorter summary.
+Merge overlapping points. Drop minor details. Keep only the most important points.
+Use '-' for bullet points. Use at most 5 bullet points. Answer only the bullet points.
+You must write the summary strictly in this language: {language_hint}.
 Script rule: {script_rule}
-Text:
+Summaries:
 {text}
 
-FINAL SUMMARY:"""
+CONDENSED SUMMARY:"""
 
 
 def detect_primary_language(text: str) -> str:
@@ -162,6 +162,18 @@ def reduce_summaries(
 
         while i < len(current_round):
             local_batch_size = min(combine_batch_size, len(current_round) - i)
+
+            # A lone item at the end of a round cannot be merged; carry it forward as-is.
+            if local_batch_size == 1:
+                next_round.append(current_round[i])
+                i += 1
+                pbar.update(1)
+                if on_reduce_progress:
+                    on_reduce_progress(round_index, i, len(current_round))
+                if on_reduce_result:
+                    on_reduce_result(round_index, len(next_round), current_round[i - 1])
+                continue
+
             reduced = False
 
             while local_batch_size >= 2:
@@ -237,6 +249,7 @@ def run_map_reduce(
     on_reduce_progress: Callable[[int, int, int], None] | None = None,
     on_map_result: Callable[[int, int, str], None] | None = None,
     on_reduce_result: Callable[[int, int, str], None] | None = None,
+    on_chunks: Callable[[list[str]], None] | None = None,
 ) -> str:
     split_docs = convert_transcript_to_split_docs(
         transcript=transcript,
@@ -245,6 +258,9 @@ def run_map_reduce(
     )
 
     print(f"Total chunks: {len(split_docs)}")
+
+    if on_chunks:
+        on_chunks([doc.page_content for doc in split_docs])
 
     language_hint = detect_primary_language(transcript)
     script_rule = get_script_rule(language_hint)
@@ -328,7 +344,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--map-max-tokens", type=int, default=256, help="Max output tokens per map step.")
     parser.add_argument("--combine-max-tokens", type=int, default=512, help="Max output tokens per reduce step.")
     parser.add_argument("--combine-batch-size", type=int, default=6, help="Summaries to combine per reduce batch.")
-    parser.add_argument("--max-model-len", type=int, default=1024, help="Model context window size from vLLM.")
+    parser.add_argument("--max-model-len", type=int, default=4096, help="Model context window size from vLLM.")
     parser.add_argument("--token-safety-margin", type=int, default=96, help="Reserved tokens to avoid edge overflow.")
     parser.add_argument("--min-output-tokens", type=int, default=64, help="Minimum output tokens per generation call.")
     return parser.parse_args()
