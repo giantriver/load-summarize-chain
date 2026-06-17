@@ -20,6 +20,9 @@ dependencies = [
 	"opencc-python-reimplemented>=0.1.7,<0.2.0",
 	"jupyter>=1.1.1,<2.0.0",
 	"streamlit>=1.57.0",
+	"paddleocr[doc-parser]>=3.5.0",
+	"paddlepaddle>=3.3.1",
+	"opencv-contrib-python>=4.10.0.84",
 ]
 
 [tool.poetry.dependencies]
@@ -40,3 +43,8 @@ package = false
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

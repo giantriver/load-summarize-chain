@@ -1,4 +1,5 @@
 import argparse
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -10,30 +11,57 @@ from langchain_openai import ChatOpenAI
 from openai import BadRequestError
 from tqdm import tqdm
 
+from doc_structure import (
+    HEADING_PATTERNS,
+    BARE_NUMBER_RE as _DS_BARE_NUMBER_RE,
+    build_documents_from_pages,
+    is_heading_line as _ds_is_heading_line,
+    is_standalone_section_heading as _ds_is_standalone_section_heading,
+)
+
 try:
     from opencc import OpenCC
 except Exception:
     OpenCC = None
 
-MAP_TEMPLATE_TXT = """Write a detail summary of this text section in bullet points.
-Use '-' for bullet points and answer only the bullet points.
+MAP_TEMPLATE_TXT = """Extract the key information from this text section.
+
+Rules:
+- Summarize ONLY the content inside <source_text>.
+- Do not include, translate, or summarize these rules.
+- Keep only important information.
+- Remove repetition and minor details.
+- Use concise bullet points.
+- One idea per bullet point.
+- Maximum 5 bullet points.
+- If <source_text> has no useful information, output only: -
+
 You must write the summary strictly in this language: {language_hint}.
-Do not switch languages unless the input itself is mixed-language content.
 Script rule: {script_rule}
-Text:
+
+<source_text>
 {text}
+</source_text>
 
-SUMMARY:"""
+KEY POINTS:"""
 
-COMBINE_TEMPLATE_TXT = """Condense and compress the following summaries into a shorter summary.
-Merge overlapping points. Drop minor details. Keep only the most important points.
-Use '-' for bullet points. Use at most 5 bullet points. Answer only the bullet points.
+COMBINE_TEMPLATE_TXT = """Write a concise paragraph summary of the following summaries.
+
+Rules:
+- Merge overlapping ideas.
+- Keep only the most important concepts.
+- Remove repeated information.
+- Omit examples and secondary details.
+- Focus on the overall meaning instead of listing every point.
+- Write only ONE short paragraph.
+
 You must write the summary strictly in this language: {language_hint}.
 Script rule: {script_rule}
+
 Summaries:
 {text}
 
-CONDENSED SUMMARY:"""
+FINAL SUMMARY:"""
 
 
 def detect_primary_language(text: str) -> str:
@@ -57,10 +85,235 @@ def normalize_output_script(text: str, language_hint: str) -> str:
     return converter.convert(text)
 
 
+def remove_prompt_echo(text: str) -> str:
+    prompt_echo_markers = (
+        "summarize only the content",
+        "do not include, translate, or summarize",
+        "keep only important information",
+        "remove repetition and minor details",
+        "use concise bullet points",
+        "one idea per bullet point",
+        "maximum 5 bullet points",
+        "source_text",
+        "key points",
+        "只摘要",
+        "不要包含",
+        "不要翻譯",
+        "保留重要資訊",
+        "使用簡潔",
+        "刪除重複",
+        "重複和細節",
+        "次要細節",
+        "每個想法",
+        "最多 5",
+        "最多5",
+        "五點",
+        "5 點",
+    )
+    cleaned_lines: list[str] = []
+    for line in text.splitlines():
+        normalized_line = line.strip().lstrip("-•*0123456789.、)） ").strip()
+        lower_line = normalized_line.lower()
+        if lower_line in {"rules", "規則", "key points"}:
+            continue
+        if any(marker in lower_line for marker in prompt_echo_markers):
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines).strip()
+
+
 def count_tokens(text: str) -> int:
     # cl100k_base is a practical approximation for OpenAI-compatible chat models.
     encoding = tiktoken.get_encoding("cl100k_base")
     return len(encoding.encode(text))
+
+
+PAGE_NUMBER_RE = re.compile(r"第\s*\d+\s*頁\s*/\s*共\s*\d+\s*頁")
+# Legacy patterns kept for structural_split_text (plain-text path)
+MAIN_HEADING_RE = re.compile(r"^[一二三四五六七八九十]+、.+$")
+SUB_HEADING_RE = re.compile(r"^（[一二三四五六七八九十]+）.+$")
+NUMBER_RE = re.compile(r"^\d+[.．、]\s*.+$")
+BARE_NUMBER_RE = re.compile(r"^\d+[.．、]$")
+PAREN_NUMBER_RE = re.compile(r"^（\d+）.+$")
+SENTENCE_END_RE = re.compile(r"[。！？；;：:]$")
+
+
+# Delegate heading detection to doc_structure so unwrap and structural split
+# use the same patterns.
+def is_heading_line(line: str) -> bool:
+    return _ds_is_heading_line(line)
+
+
+def is_standalone_section_heading(line: str) -> bool:
+    return _ds_is_standalone_section_heading(line)
+
+
+def should_keep_line_break(previous_line: str, next_line: str) -> bool:
+    if not previous_line or not next_line:
+        return True
+    if is_heading_line(previous_line):
+        return True
+    if is_heading_line(next_line):
+        return True
+    return bool(SENTENCE_END_RE.search(previous_line))
+
+
+def unwrap_pdf_line_breaks(text: str) -> str:
+    lines = text.splitlines()
+    unwrapped: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if unwrapped and unwrapped[-1]:
+                unwrapped.append("")
+            continue
+
+        if not unwrapped or not unwrapped[-1]:
+            unwrapped.append(stripped)
+            continue
+
+        previous = unwrapped[-1]
+        if should_keep_line_break(previous, stripped):
+            unwrapped.append(stripped)
+        else:
+            unwrapped[-1] = previous + stripped
+
+    return "\n".join(unwrapped)
+
+
+def clean_document_text(text: str) -> str:
+    text = PAGE_NUMBER_RE.sub("", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.strip() for line in text.splitlines()]
+
+    cleaned_lines: list[str] = []
+    previous_blank = False
+    for line in lines:
+        if not line:
+            if not previous_blank:
+                cleaned_lines.append("")
+            previous_blank = True
+            continue
+
+        cleaned_lines.append(line)
+        previous_blank = False
+
+    return unwrap_pdf_line_breaks("\n".join(cleaned_lines).strip())
+
+
+def split_by_heading_pattern(text: str, pattern: re.Pattern[str]) -> list[str]:
+    lines = text.splitlines()
+    sections: list[list[str]] = []
+    current: list[str] = []
+
+    for line in lines:
+        if pattern.match(line.strip()) and current:
+            sections.append(current)
+            current = [line]
+        else:
+            current.append(line)
+
+    if current:
+        sections.append(current)
+
+    return ["\n".join(section).strip() for section in sections if "\n".join(section).strip()]
+
+
+def is_heading_line(line: str) -> bool:
+    stripped = line.strip()
+    return any(
+        pattern.match(stripped)
+        for pattern in (MAIN_HEADING_RE, SUB_HEADING_RE, NUMBER_RE, BARE_NUMBER_RE, PAREN_NUMBER_RE)
+    )
+
+
+def should_merge_small_chunk(chunk: str, min_tokens: int = 80) -> bool:
+    stripped = chunk.strip()
+    if not stripped:
+        return False
+    if count_tokens(stripped) >= min_tokens:
+        return False
+
+    lines = [line for line in stripped.splitlines() if line.strip()]
+    if lines and all(is_heading_line(line) for line in lines):
+        return True
+    if len(lines) == 1 and BARE_NUMBER_RE.match(lines[0].strip()):
+        return True
+    non_heading_text = "".join(line.strip() for line in lines if not is_heading_line(line))
+    if any(is_heading_line(line) for line in lines) and non_heading_text in {"", "。", "，", "、"}:
+        return True
+    if stripped in {"。", "，", "、"}:
+        return True
+    return stripped[-1] in {"之", "及", "與", "和", "或", "、", "（", "，", "；", "："}
+
+
+def repair_small_chunks(chunks: list[str], chunk_size: int) -> list[str]:
+    repaired: list[str] = []
+    i = 0
+
+    while i < len(chunks):
+        chunk = chunks[i].strip()
+        if not chunk:
+            i += 1
+            continue
+
+        if should_merge_small_chunk(chunk) and i + 1 < len(chunks):
+            merged = chunk + "\n" + chunks[i + 1].strip()
+            if count_tokens(merged) <= chunk_size:
+                repaired.append(merged)
+                i += 2
+                continue
+
+        if should_merge_small_chunk(chunk) and repaired:
+            merged = repaired[-1] + "\n" + chunk
+            if count_tokens(merged) <= chunk_size:
+                repaired[-1] = merged
+                i += 1
+                continue
+
+        repaired.append(chunk)
+        i += 1
+
+    return repaired
+
+
+def structural_split_text(
+    text: str,
+    chunk_size: int,
+    overlap_size: int,
+    clean_text: bool = True,
+) -> list[str]:
+    fallback_splitter = get_text_splitter(chunk_size=chunk_size, overlap_size=overlap_size)
+    patterns = [MAIN_HEADING_RE, SUB_HEADING_RE, NUMBER_RE, PAREN_NUMBER_RE]
+
+    def split_with_fallback(section: str, pattern_index: int = 0) -> list[str]:
+        if count_tokens(section) <= chunk_size:
+            return [section]
+
+        if pattern_index < len(patterns):
+            pattern = patterns[pattern_index]
+            parts = split_by_heading_pattern(section, pattern)
+            if len(parts) > 1:
+                first_line = parts[0].splitlines()[0].strip()
+                if pattern_index > 0 and not pattern.match(first_line):
+                    parts = [parts[0] + "\n" + parts[1], *parts[2:]]
+
+                chunks: list[str] = []
+                for part in parts:
+                    chunks.extend(split_with_fallback(part, pattern_index + 1))
+                return chunks
+
+        return fallback_splitter.split_text(section)
+
+    split_text = clean_document_text(text) if clean_text else text.strip()
+    chunks = split_with_fallback(split_text)
+    for _ in range(3):
+        repaired = repair_small_chunks(chunks, chunk_size)
+        if repaired == chunks:
+            break
+        chunks = repaired
+    return [chunk for chunk in chunks if chunk.strip()]
 
 
 def is_context_overflow_error(exc: Exception) -> bool:
@@ -107,14 +360,51 @@ def get_text_splitter(chunk_size: int, overlap_size: int) -> RecursiveCharacterT
     )
 
 
+def _build_documents_from_page_texts(
+    page_texts: list[str],
+    chunk_size: int,
+    overlap_size: int,
+    source: str = "",
+) -> list[Document]:
+    docs, structure_info = build_documents_from_pages(
+        pages=page_texts,
+        chunk_size=chunk_size,
+        overlap_size=overlap_size,
+        source_file=source,
+    )
+    excluded = structure_info.get("toc_pages_excluded", [])
+    if excluded:
+        print(f"[doc_structure] 已排除 {len(excluded)} 頁目錄（頁碼：{excluded}）")
+    preview = structure_info.get("preview_headings", [])
+    if preview:
+        print(f"[doc_structure] 結構偵測前 {len(preview)} 個 heading：")
+        for line in preview:
+            print(f"  {line}")
+    return docs
+
+
 def convert_transcript_to_split_docs(
     transcript: str,
     chunk_size: int,
     overlap_size: int,
+    source: str = "input",
+    page_texts: list[str] | None = None,
 ) -> list[Document]:
-    docs = [Document(page_content=transcript)] # 把 transcript 包裝成 LangChain 能理解的 Document 格式
-    text_splitter = get_text_splitter(chunk_size=chunk_size, overlap_size=overlap_size)
-    return text_splitter.split_documents(docs)
+    if page_texts:
+        return _build_documents_from_page_texts(
+            page_texts=page_texts,
+            chunk_size=chunk_size,
+            overlap_size=overlap_size,
+            source=source,
+        )
+
+    docs, _ = build_documents_from_pages(
+        pages=[transcript],
+        chunk_size=chunk_size,
+        overlap_size=overlap_size,
+        source_file=source,
+    )
+    return docs
 
 
 def build_llm(
@@ -245,22 +535,26 @@ def run_map_reduce(
     max_model_len: int,
     token_safety_margin: int,
     min_output_tokens: int,
+    source: str = "input",
+    page_texts: list[str] | None = None,
     on_map_progress: Callable[[int, int], None] | None = None,
     on_reduce_progress: Callable[[int, int, int], None] | None = None,
     on_map_result: Callable[[int, int, str], None] | None = None,
     on_reduce_result: Callable[[int, int, str], None] | None = None,
-    on_chunks: Callable[[list[str]], None] | None = None,
+    on_chunks: Callable[[list[Document]], None] | None = None,
 ) -> str:
     split_docs = convert_transcript_to_split_docs(
         transcript=transcript,
         chunk_size=chunk_size,
         overlap_size=overlap_size,
+        source=source,
+        page_texts=page_texts,
     )
 
     print(f"Total chunks: {len(split_docs)}")
 
     if on_chunks:
-        on_chunks([doc.page_content for doc in split_docs])
+        on_chunks(split_docs)
 
     language_hint = detect_primary_language(transcript)
     script_rule = get_script_rule(language_hint)
@@ -303,6 +597,7 @@ def run_map_reduce(
             )
 
         mapped_output = normalize_output_script(mapped_output, language_hint)
+        mapped_output = remove_prompt_echo(mapped_output)
         summaries.append(mapped_output)
         if on_map_progress:
             on_map_progress(len(summaries), len(split_docs))
@@ -335,8 +630,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Map-reduce summarization using vLLM OpenAI-compatible API.")
     parser.add_argument("--input", type=Path, default=Path("sample-text.txt"), help="Input text file path.")
     parser.add_argument("--output", type=Path, default=Path("summary-map-reduce.txt"), help="Output summary file path.")
-    parser.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct", help="Model name served by vLLM.")
-    parser.add_argument("--base-url", default="http://localhost:8000/v1", help="vLLM OpenAI-compatible base URL.")
+    parser.add_argument("--model", default="local-model", help="Model name served by llama.cpp server.")
+    parser.add_argument("--base-url", default="http://localhost:8082/v1", help="llama.cpp OpenAI-compatible base URL.")
     parser.add_argument("--api-key", default="EMPTY", help="API key for endpoint auth.")
     parser.add_argument("--chunk-size", type=int, default=600, help="Chunk size in tokens for splitting.")
     parser.add_argument("--overlap-size", type=int, default=0, help="Chunk overlap in tokens.")
