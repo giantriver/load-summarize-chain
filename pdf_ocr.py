@@ -4,7 +4,7 @@ import json
 import os
 import re
 from pathlib import Path
-from tempfile import NamedTemporaryFile, TemporaryDirectory
+from tempfile import TemporaryDirectory
 from typing import Any
 
 # Avoid PaddlePaddle CPU oneDNN/PIR runtime errors with some PP-OCRv5 models.
@@ -54,20 +54,16 @@ def extract_pdf_pages(pdf_bytes: bytes, filename: str = "upload.pdf") -> list[st
     if not filename.lower().endswith(".pdf"):
         raise PdfOcrError("目前只支援 PDF 檔案。")
 
-    with NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
-        tmp.write(pdf_bytes)
-        tmp.flush()
+    text_layer_pages = extract_pdf_text_layer_pages(pdf_bytes)
+    if text_layer_pages:
+        return text_layer_pages
 
-        text_layer_pages = extract_pdf_text_layer_pages(tmp.name)
-        if text_layer_pages:
-            return text_layer_pages
-
-        try:
-            output = predict_pdf_pages(tmp.name)
-        except PdfOcrError:
-            raise
-        except Exception as exc:
-            raise PdfOcrError(f"PaddleOCR 擷取 PDF 文字失敗：{exc}") from exc
+    try:
+        output = predict_pdf_pages(pdf_bytes)
+    except PdfOcrError:
+        raise
+    except Exception as exc:
+        raise PdfOcrError(f"PaddleOCR 擷取 PDF 文字失敗：{exc}") from exc
 
     return output
 
@@ -77,14 +73,14 @@ def extract_pdf_text(pdf_bytes: bytes, filename: str = "upload.pdf") -> str:
     return "\n\n".join(pages).strip()
 
 
-def extract_pdf_text_layer_pages(pdf_path: str) -> list[str]:
+def extract_pdf_text_layer_pages(pdf_input: bytes | str) -> list[str]:
     try:
         import pypdfium2 as pdfium
     except ImportError:
         return []
 
     pages: list[str] = []
-    pdf = pdfium.PdfDocument(pdf_path)
+    pdf = pdfium.PdfDocument(pdf_input)
     try:
         for page_index in range(len(pdf)):
             page = pdf[page_index]
@@ -102,17 +98,17 @@ def extract_pdf_text_layer_pages(pdf_path: str) -> list[str]:
     return pages
 
 
-def extract_pdf_text_layer(pdf_path: str) -> str:
-    pages = extract_pdf_text_layer_pages(pdf_path)
+def extract_pdf_text_layer(pdf_input: bytes | str) -> str:
+    pages = extract_pdf_text_layer_pages(pdf_input)
     return "\n\n".join(page for page in pages if page).strip()
 
 
-def predict_pdf_pages(pdf_path: str) -> list[str]:
+def predict_pdf_pages(pdf_input: bytes | str) -> list[str]:
     import numpy as np
     import pypdfium2 as pdfium
 
     ocr = get_pdf_ocr_pipeline()
-    pdf = pdfium.PdfDocument(pdf_path)
+    pdf = pdfium.PdfDocument(pdf_input)
     pages: list[str] = []
 
     try:

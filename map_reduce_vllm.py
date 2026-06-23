@@ -12,7 +12,6 @@ from openai import BadRequestError
 from tqdm import tqdm
 
 from doc_structure import (
-    HEADING_PATTERNS,
     BARE_NUMBER_RE as _DS_BARE_NUMBER_RE,
     build_documents_from_pages,
     is_heading_line as _ds_is_heading_line,

@@ -13,6 +13,17 @@ st.title("文字摘要工具")
 st.caption("貼上文字或上傳 PDF，使用 vLLM 產生摘要")
 
 
+def check_llm_available(base_url: str) -> bool:
+    try:
+        import requests
+        url = base_url.rstrip("/") + "/models"
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        return True
+    except Exception:
+        return False
+
+
 def fetch_current_model(base_url: str) -> str | None:
     try:
         import requests
@@ -24,26 +35,6 @@ def fetch_current_model(base_url: str) -> str | None:
         return ids[0] if ids else None
     except Exception:
         return None
-
-
-def format_heading_meta(heading: dict) -> str:
-    style = heading.get("style")
-    num = heading.get("num", "")
-    title = heading.get("title", "")
-    if style == "cjk_comma":
-        return f"{num}、{title}"
-    if style == "cjk_paren":
-        return f"（{num}）{title}"
-    if style in {"paren_num", "paren_upper", "paren_lower"}:
-        return f"({num}) {title}"
-    sep = "." if "." not in str(num) and "．" not in str(num) else ""
-    return f"{num}{sep} {title}".strip()
-
-
-def format_heading_path(headings: list[dict]) -> str | None:
-    labels = [format_heading_meta(heading) for heading in headings if isinstance(heading, dict)]
-    labels = [label for label in labels if label]
-    return " > ".join(labels) if labels else None
 
 
 if "input_text" not in st.session_state:
@@ -94,10 +85,16 @@ input_text = st.text_area(
     key="input_text",
 )
 
-chunk_only = st.toggle("只測試 chunk 切分（不執行 map-reduce）", value=False)
+base_url = st.text_input("Base URL", value="http://localhost:8082/v1")
+llm_available = check_llm_available(base_url)
+
+if llm_available:
+    chunk_only = st.toggle("只測試 chunk 切分（不執行 map-reduce）", value=False)
+else:
+    st.warning("無法連線至 LLM 服務（llama.cpp），摘要功能已停用，僅提供 chunk 切分功能。")
+    chunk_only = True
 
 if not chunk_only:
-    base_url = st.text_input("Base URL", value="http://localhost:8082/v1")
     model = fetch_current_model(base_url) or "local-model"
     st.caption(f"模型：`{model}`")
 
@@ -140,20 +137,14 @@ if st.button(run_button_label, type="primary"):
                         else None
                     )
 
-                    heading_path = metadata.get("heading_path") or []
-                    contains_sections: list = metadata.get("contains_sections") or []
-                    chapter_label = format_heading_path(heading_path) if isinstance(heading_path, list) else None
-                    sections_label = "、".join(contains_sections) if len(contains_sections) > 1 else None
-
-                    subitems_label = "是" if metadata.get("contains_subitems") else None
+                    contained_sections = metadata.get("contained_sections") or []
+                    sections_label = "；".join(contained_sections) or None
 
                     meta_parts = [
                         part
                         for part in [
                             f"頁碼：{page_label}" if page_label else None,
-                            f"章節：{chapter_label}" if chapter_label else None,
-                            f"包含小節：{sections_label}" if sections_label else None,
-                            f"包含條列：{subitems_label}" if subitems_label else None,
+                            f"本段包含：{sections_label}" if sections_label else None,
                         ]
                         if part
                     ]
