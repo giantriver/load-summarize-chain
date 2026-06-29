@@ -426,8 +426,9 @@ class TestMergeTrees:
             "四、任務分工 > （一）災防辦",
             "四、任務分工 > （二）核安會",
         ]
-        # merged metadata records that a merge happened
-        assert merged["merge_applied"] is True
+        # merged metadata records that a merge happened via the warnings field
+        assert "small_chunk_merged" in merged["warnings"]
+        assert "merge_applied" not in merged
 
     def test_merge_does_not_mutate_sources(self):
         m1 = _single_chunk_meta("四、任務分工\n（一）災防辦")
@@ -546,13 +547,18 @@ class TestStructureTreeMetadata:
         assert tree["pattern_id"] == "cjk_comma"
         assert tree["items"][0]["pattern_id"] == "cjk_paren"
         assert tree["items"][0]["items"][0]["pattern_id"] == "decimal"
-        assert meta["structure_type"] == "anchor_based"
-        assert meta["split_strategy"] == "delayed_anchor_recursive"
 
-    def test_structure_tree_is_primary_heading_tree_is_alias(self):
+    def test_lean_metadata_fields_only(self):
         meta = _single_chunk_meta("三、作業程序")
-        assert "structure_tree" in meta
-        assert meta["heading_tree"] == meta["structure_tree"]
+        # Final metadata is the lean public set; diagnostics are not exposed.
+        assert set(meta) == {
+            "source_file", "doc_title", "page_start", "page_end", "chunk_index",
+            "contained_sections", "structure_tree", "warnings",
+        }
+        for dropped in ("heading_tree", "structure_type", "split_strategy",
+                        "structure_confidence", "anchor_order_confidence",
+                        "anchor_order_support_count", "merge_applied", "merge_reason"):
+            assert dropped not in meta
 
 
 # ─── Plan Test 7: MapReduce-friendly — no flood of tiny chunks ────────────────
@@ -563,15 +569,13 @@ class TestNoTinyChunkFlood:
             pages=[TASK_TEXT], chunk_size=60, overlap_size=0, source_file="x.pdf")
         min_tokens = max(80, 60 // 10)
         tiny = [d for d in docs if _count_tokens_safe(d.page_content) < min_tokens]
-        # any surviving tiny chunk is rare; merged ones carry a reason
+        # any surviving tiny chunk is rare; merged ones are flagged in warnings
         assert len(tiny) <= 2
+        merged = [d for d in docs if "small_chunk_merged" in (d.metadata.get("warnings") or [])]
+        assert merged, "expected at least one merged chunk for this tiny chunk_size"
         for d in docs:
-            if d.metadata.get("merge_applied"):
-                assert d.metadata["merge_reason"] in {
-                    "small_chunk_same_parent",
-                    "small_chunk_same_top_anchor",
-                    "small_chunk_cross_anchor",
-                }
+            assert "merge_applied" not in d.metadata
+            assert "merge_reason" not in d.metadata
 
 
 # ─── Plan Test 4 / 5 (anchor order): evidence beats first-seen ────────────────

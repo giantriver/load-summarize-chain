@@ -109,6 +109,11 @@ _DEFAULT_PATTERN_SPECS: list[HeadingPatternSpec] = [
 # Delayed split: even if a range fits in chunk_size, keep splitting while it
 # spans more than this many top-level anchors (distinct outermost sections).
 MAX_ANCHORS_PER_CHUNK = 6
+# …but the anchor-count cap is token-aware: it only forces a split once a range
+# is reasonably large. A range that fits well under this fraction of chunk_size
+# is kept whole even with many top anchors (e.g. a 7-item list that is still
+# small) — splitting it would only create tiny fragments that repair merges back.
+ANCHOR_SPLIT_MIN_RATIO = 0.5
 # Below this much parent/child evidence, the anchor order is weakly supported.
 MIN_ANCHOR_SUPPORT = 3
 
@@ -440,16 +445,19 @@ def is_noise_line(c: HeadingCandidate) -> bool:
     if FIGURE_TABLE_RE.match(line):
         return True
 
-    # 5. A single-integer decimal that is really wrapped prose, not an anchor.
-    #    Under the anchor model a numbered list item IS a valid (deep) anchor, so
-    #    a trailing 。！？ alone no longer disqualifies it (e.g. "1. 協助督導。" is
-    #    a legitimate list anchor). We still reject:
-    #      • an internal comma → a wrapped clause, e.g. "1.如仍須…，應先獲輻射";
-    #      • leading-zero numbers (004) → never section/anchor numbers.
+    # 5. A single-integer decimal. Under the anchor model a numbered line IS a
+    #    valid (deep) anchor — there is no list-vs-section split — so we do NOT try
+    #    to second-guess "prose vs list item" here (neither a trailing 。！？ nor an
+    #    internal comma disqualifies it; e.g. "1. 協助督導。" and "1. 全國…，…。" are
+    #    both kept). The only reject is leading-zero numbers (004), which are
+    #    codes/IDs rather than section/anchor numbers.
     if c.pattern_id == "decimal" and "." not in c.num and "．" not in c.num:
-        title = c.title.strip()
-        if "，" in title or "," in title:
-            return True
+        # Leading-zero numbers (004) are codes/IDs, never section/list anchors.
+        # NOTE: there is deliberately NO comma-based filter. Under the anchor model
+        # a numbered line is just an anchor candidate — there is no list-vs-section
+        # split — so comma-bearing list items (very common in regulations) must not
+        # be dropped at detection. Whether such an anchor matters is decided later
+        # by level + delayed splitting, not by guessing "prose vs item" here.
         if len(c.num) > 1 and c.num[0] == "0":
             return True
 
@@ -920,6 +928,9 @@ def validate_sequence(candidates: list[HeadingCandidate]) -> list[HeadingCandida
     # For decimal: track last accepted number at each prefix tuple
     last_at_prefix: dict[tuple, int] = {}
     accepted_prefixes: set[tuple] = set()
+    # Level of the depth-1 decimals currently being tracked. A shallower
+    # (parent-level) non-decimal anchor later resets the counter — see below.
+    decimal_base_level: int | None = None
 
     for c in candidates:
         if is_decimal_chain_spec(c.pattern_id):
@@ -929,6 +940,7 @@ def validate_sequence(candidates: list[HeadingCandidate]) -> list[HeadingCandida
 
             depth = len(parts)
             if depth == 1:
+                decimal_base_level = c.level
                 n = parts[0]
                 last = last_at_prefix.get((), 0)
                 # Accept if n==1, or within MAX_JUMP of last accepted (or first occurrence ≤ MAX_JUMP+1)
@@ -948,6 +960,16 @@ def validate_sequence(candidates: list[HeadingCandidate]) -> list[HeadingCandida
                         accepted.append(c)
                 # else: parent not accepted → reject
         else:
+            # A non-decimal anchor shallower than the tracked decimals starts a new
+            # structural context (a different parent). Reset the counter so it does
+            # NOT leak across the boundary — otherwise a missing first item ("1.")
+            # makes the next list's 2./3. fail continuity (they sit below the prior
+            # section's last number). Inner anchors (e.g. paren_num below a decimal)
+            # are deeper, so they never trigger a reset.
+            if decimal_base_level is not None and c.level < decimal_base_level:
+                last_at_prefix = {}
+                accepted_prefixes = set()
+                decimal_base_level = None
             # CJK, paren_* styles are unambiguous enough; accept unconditionally
             accepted.append(c)
 
@@ -1072,31 +1094,43 @@ def _build_structure_tree_meta(
     each node's ordered `items` list (preserving document order). EVERY anchor
     becomes a node — there is no structural/enum gate; the tree is the detected
     structure, not a guaranteed table of contents.
+
+    Dedup is *per-parent* (path-aware): an anchor is only collapsed into an
+    existing node when a sibling with the same section_key already sits under the
+    same parent. A global `(level, section_key)` dedup would wrongly merge list
+    items that restart their numbering under different parents — e.g. （1）（2）（3）
+    recurring beneath each of 1./2./3. — dropping every repeat after the first.
     """
-    ordered: list[dict] = []
-    seen: set[tuple[int, str]] = set()
-
-    def _add(level: int, pattern_id: str, num: str,
-             title: str, raw: str, marker: dict) -> None:
-        key = (level, section_key(pattern_id, num))
-        if key in seen:
-            return
-        seen.add(key)
-        ordered.append(_make_node(level, pattern_id, num, title, raw, marker))
-
-    for h in anchor_path:
-        _add(h["level"], h["pattern_id"], h["num"],
-             h["title"], h.get("raw", ""), h["marker"])
-    for c in contained:
-        _add(c.level, c.pattern_id, c.num, c.title, c.raw, c.marker)
+    entries: list[tuple[int, str, str, str, str, dict]] = [
+        (h["level"], h["pattern_id"], h["num"], h["title"], h.get("raw", ""), h["marker"])
+        for h in anchor_path
+    ] + [
+        (c.level, c.pattern_id, c.num, c.title, c.raw, c.marker)
+        for c in contained
+    ]
 
     root: dict = {}
     stack: list[dict] = []
-    for node in ordered:
-        while stack and stack[-1]["level"] >= node["level"]:
+    for level, pattern_id, num, title, raw, marker in entries:
+        key = section_key(pattern_id, num)
+        while stack and stack[-1]["level"] >= level:
             stack.pop()
-        if stack:
-            stack[-1]["items"].append(node)
+        parent = stack[-1] if stack else None
+
+        if parent is not None:
+            existing = _find_child(parent["items"], key)
+        elif root and root.get("section_key") == key:
+            existing = root
+        else:
+            existing = None
+
+        if existing is not None:
+            stack.append(existing)
+            continue
+
+        node = _make_node(level, pattern_id, num, title, raw, marker)
+        if parent is not None:
+            parent["items"].append(node)
         elif not root:
             root = node
         else:
@@ -1126,7 +1160,6 @@ def split_by_candidate_lines(
     overlap_size: int,
     source_file: str = "",
     *,
-    profile: dict | None = None,
     base_warnings: list[str] | None = None,
 ) -> list[Document]:
     """Delayed anchor-recursive split.
@@ -1141,9 +1174,6 @@ def split_by_candidate_lines(
         chunk_size=chunk_size, chunk_overlap=overlap_size,
     )
     n = len(line_records)
-    profile = profile or {}
-    anchor_conf = float(profile.get("anchor_order_confidence", 0.0))
-    anchor_support = int(profile.get("anchor_order_support_count", 0))
     base_warnings = list(base_warnings or [])
 
     def _get_text(start: int, end: int) -> str:
@@ -1174,8 +1204,6 @@ def split_by_candidate_lines(
         warnings = base_warnings + list(extra_warnings or [])
         meta = _build_metadata(
             source_file, page_start, page_end, pages, anchor_path, contained,
-            anchor_order_confidence=anchor_conf,
-            anchor_order_support_count=anchor_support,
             warnings=warnings,
         )
         return Document(page_content=text, metadata=meta)
@@ -1211,12 +1239,18 @@ def split_by_candidate_lines(
         if not text:
             return []
 
-        fits = _count_tokens(text) <= chunk_size
+        tokens = _count_tokens(text)
+        fits = tokens <= chunk_size
         min_level = min((c.level for c in cands), default=0)
         top_count = sum(1 for c in cands if c.level == min_level) if cands else 0
 
-        # Delayed-split stop condition: small enough AND not too many top anchors.
-        if fits and top_count <= MAX_ANCHORS_PER_CHUNK:
+        # Delayed-split stop condition. The MAX_ANCHORS_PER_CHUNK cap is token-aware:
+        # it only forces a split once the range is reasonably large. A range that
+        # fits AND is below ANCHOR_SPLIT_MIN_RATIO·chunk_size is kept whole even when
+        # it spans many top anchors (e.g. a 7-item list that is still small), so a
+        # coherent list isn't shattered into fragments that repair just merges back.
+        anchor_cap_applies = tokens > chunk_size * ANCHOR_SPLIT_MIN_RATIO
+        if fits and (top_count <= MAX_ANCHORS_PER_CHUNK or not anchor_cap_applies):
             return [_make_doc(text, _get_pages(start, end), stack, cands)]
 
         # No anchors left to split on → character fallback (only reached when big).
@@ -1275,11 +1309,13 @@ def _build_metadata(
     anchor_path: list[dict],
     contained: list[HeadingCandidate] | None = None,
     *,
-    anchor_order_confidence: float = 0.0,
-    anchor_order_support_count: int = 0,
-    split_strategy: str = "delayed_anchor_recursive",
     warnings: list[str] | None = None,
 ) -> dict:
+    # Lean public metadata. Diagnostics that were once emitted (heading_tree alias,
+    # structure_type, split_strategy, structure/anchor_order confidence + support,
+    # merge_applied/merge_reason) are intentionally NOT exposed — nothing downstream
+    # reads them, and `warnings` already records merge/fallback events. structure_tree
+    # is kept (the detected anchor structure of THIS chunk — not a guaranteed ToC).
     structure_tree = _build_structure_tree_meta(anchor_path, contained or [])
     return {
         "source_file": source_file,
@@ -1287,17 +1323,7 @@ def _build_metadata(
         "page_start": page_start,
         "page_end": page_end,
         "contained_sections": _contained_sections_from_tree(structure_tree),
-        # structure_tree is the detected anchor structure of THIS chunk — not a
-        # guaranteed table of contents. heading_tree is kept as a compat alias.
         "structure_tree": structure_tree,
-        "heading_tree": structure_tree,
-        "structure_type": "anchor_based",
-        "split_strategy": split_strategy,
-        "structure_confidence": anchor_order_confidence,
-        "anchor_order_confidence": anchor_order_confidence,
-        "anchor_order_support_count": anchor_order_support_count,
-        "merge_applied": False,
-        "merge_reason": None,
         "warnings": list(warnings or []),
     }
 
@@ -1430,21 +1456,20 @@ def _merge_trees(t1: dict, t2: dict) -> dict:
     return merged
 
 
-def _merge_metadata(m1: dict, m2: dict, *, reason: str | None = None) -> dict:
+def _merge_metadata(m1: dict, m2: dict) -> dict:
     result = dict(m1)
     result["page_start"] = min(m1.get("page_start", 99999), m2.get("page_start", 99999))
     result["page_end"] = max(m1.get("page_end", 0), m2.get("page_end", 0))
     tree = _merge_trees(_get_tree(m1), _get_tree(m2))
     result["structure_tree"] = tree
-    result["heading_tree"] = tree
     result["contained_sections"] = _contained_sections_from_tree(tree)
     warnings = list(m1.get("warnings") or [])
+    # "small_chunk_merged" in warnings is the only signal that a merge happened —
+    # merge_applied/merge_reason are no longer emitted.
     for w in (m2.get("warnings") or []) + ["small_chunk_merged"]:
         if w not in warnings:
             warnings.append(w)
     result["warnings"] = warnings
-    result["merge_applied"] = True
-    result["merge_reason"] = reason
     return result
 
 
@@ -1467,28 +1492,29 @@ def repair_small_chunks_docs(docs: list[Document], chunk_size: int) -> list[Docu
             continue
 
         if _should_merge_doc(doc, min_tokens):
-            # Candidate merges: (tier, direction) for whichever still fits.
+            # Candidate merges: (tier, direction) for whichever still fits. The tier
+            # (relatedness) drives the choice; the reason string is no longer stored.
             options = []
             if i + 1 < len(docs):
                 merged_text = text + "\n" + docs[i + 1].page_content.strip()
                 if _count_tokens(merged_text) <= chunk_size:
-                    tier, reason = _merge_tier_reason(doc.metadata, docs[i + 1].metadata)
-                    options.append((tier, "right", reason, merged_text))
+                    tier, _ = _merge_tier_reason(doc.metadata, docs[i + 1].metadata)
+                    options.append((tier, "right", merged_text))
             if repaired:
                 merged_text = repaired[-1].page_content + "\n" + text
                 if _count_tokens(merged_text) <= chunk_size:
-                    tier, reason = _merge_tier_reason(repaired[-1].metadata, doc.metadata)
-                    options.append((tier, "left", reason, merged_text))
+                    tier, _ = _merge_tier_reason(repaired[-1].metadata, doc.metadata)
+                    options.append((tier, "left", merged_text))
 
             if options:
                 options.sort(key=lambda o: (o[0], 0 if o[1] == "right" else 1))
-                tier, direction, reason, merged_text = options[0]
+                tier, direction, merged_text = options[0]
                 if direction == "right":
-                    meta = _merge_metadata(doc.metadata, docs[i + 1].metadata, reason=reason)
+                    meta = _merge_metadata(doc.metadata, docs[i + 1].metadata)
                     repaired.append(Document(page_content=merged_text, metadata=meta))
                     i += 2
                 else:
-                    meta = _merge_metadata(repaired[-1].metadata, doc.metadata, reason=reason)
+                    meta = _merge_metadata(repaired[-1].metadata, doc.metadata)
                     repaired[-1] = Document(page_content=merged_text, metadata=meta)
                     i += 1
                 continue
@@ -1539,7 +1565,7 @@ def build_documents_from_pages(
     docs = split_by_candidate_lines(
         line_records, candidates, toc_line_nos,
         chunk_size, overlap_size, source_file,
-        profile=profile, base_warnings=base_warnings,
+        base_warnings=base_warnings,
     )
 
     for _ in range(3):

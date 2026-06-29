@@ -15,7 +15,7 @@
 ## 0. 總覽
 
 入口 `build_documents_from_pages(pages, chunk_size, overlap_size, source_file)`
-（[doc_structure.py:1503](../doc_structure.py)）回傳 `(docs, structure_info)`。
+（[doc_structure.py:1529](../doc_structure.py)）回傳 `(docs, structure_info)`。
 
 ```
 pages: list[str]（每頁原始文字）
@@ -47,14 +47,14 @@ pages: list[str]（每頁原始文字）
 
 ## 1. 資料結構
 
-### LineRecord（[doc_structure.py:193](../doc_structure.py)）
+### LineRecord（[doc_structure.py:198](../doc_structure.py)）
 ```python
 LineRecord(page: int, text: str, char_start: int = 0, char_end: int = 0)
 ```
 `char_start/char_end` 是「全文串接後」的字元偏移（每行尾 +1 當換行）。目前僅在切分
 內部當行索引用，**不會**寫入 chunk metadata。
 
-### HeadingCandidate（[doc_structure.py:201](../doc_structure.py)）
+### HeadingCandidate（[doc_structure.py:206](../doc_structure.py)）
 ```python
 HeadingCandidate(page, line_no, char_start, char_end,
                  pattern_id: str, marker: dict,
@@ -102,14 +102,14 @@ HeadingPatternSpec(
 > 這 6 條都只是 anchor 規則；例如 `（一）/（二）` 在某文件是章節、在另一文件是段落條列，
 > 系統不在 registry 層決定，交給 level + 延遲切分。
 
-### Registry API（[doc_structure.py:120–160](../doc_structure.py)）
+### Registry API（[doc_structure.py:125–165](../doc_structure.py)）
 - `get_pattern_specs()`：全部 spec（註冊順序）。
 - `get_spec(pattern_id)`：取單一 spec。
-- `iter_specs_by_priority()`（[:129](../doc_structure.py)）：依 priority 升冪（偵測用順序）。
-- `default_anchor_order()`（[:134](../doc_structure.py)）：priority 順序的 id 清單，僅當 anchor order 的 tie-break。
-- `is_decimal_chain_spec(pattern_id)`（[:139](../doc_structure.py)）：是否 `level_strategy=="decimal_chain"`。
+- `iter_specs_by_priority()`（[:134](../doc_structure.py)）：依 priority 升冪（偵測用順序）。
+- `default_anchor_order()`（[:139](../doc_structure.py)）：priority 順序的 id 清單，僅當 anchor order 的 tie-break。
+- `is_decimal_chain_spec(pattern_id)`（[:144](../doc_structure.py)）：是否 `level_strategy=="decimal_chain"`。
 - `register_pattern_spec(spec, *, replace=False)` / `unregister_pattern_spec(id)`
-  （[:144](../doc_structure.py)）：runtime 增刪規則（測試或擴充用）。
+  （[:149](../doc_structure.py)）：runtime 增刪規則（測試或擴充用）。
 
 ### 新增一條規則的範例（例如「第十條」）
 ```python
@@ -124,11 +124,11 @@ register_pattern_spec(HeadingPatternSpec(
 `section_key="article_cjk:十"`，並自動進入 detect / order / level / tree，**不必改其他地方**。
 
 ### 裸號併行（PDF 把序號和標題拆成兩行）
-`BARE_NUMBER_RE = ^(\d+(?:[.．]\d+)*)[.．、]$`（[doc_structure.py:162](../doc_structure.py)）
+`BARE_NUMBER_RE = ^(\d+(?:[.．]\d+)*)[.．、]$`（[doc_structure.py:167](../doc_structure.py)）
 
-`detect_heading_candidates`（[doc_structure.py:375](../doc_structure.py)）：若某行只是裸號
+`detect_heading_candidates`（[doc_structure.py:380](../doc_structure.py)）：若某行只是裸號
 （如 `1.`），且**下一行**非 anchor，則合併成 `「1. 下一行內容」` 再以
-`_match_spec`（[doc_structure.py:366](../doc_structure.py)）依 priority 重新比對；合併後的 candidate
+`_match_spec`（[doc_structure.py:371](../doc_structure.py)）依 priority 重新比對；合併後的 candidate
 `char_start` 取本行、`char_end` 取下一行。
 
 **關鍵限制（泛化性注意點）**
@@ -140,7 +140,7 @@ register_pattern_spec(HeadingPatternSpec(
 
 ---
 
-## 3. marker（[doc_structure.py:218](../doc_structure.py)）
+## 3. marker（[doc_structure.py:223](../doc_structure.py)）
 
 簽名 `build_marker(spec: HeadingPatternSpec, num: str, raw: str) -> dict`：
 ```jsonc
@@ -159,7 +159,7 @@ register_pattern_spec(HeadingPatternSpec(
 
 ---
 
-## 4. 清理：clean_line_records（[doc_structure.py:310](../doc_structure.py)）
+## 4. 清理：clean_line_records（[doc_structure.py:315](../doc_structure.py)）
 
 四個 pass：
 
@@ -175,12 +175,12 @@ register_pattern_spec(HeadingPatternSpec(
 > 影響：標題的「換行續行」會被併回；但若內文被誤判為續行而併入，可能改變 chunk 邊界。
 > anchor 行一律保護不被併（前後都檢查 `is_heading_line`）。
 
-`is_heading_line`（[doc_structure.py:262](../doc_structure.py)）：裸號或任一 registry 規則命中。
-`is_standalone_section_heading`（[doc_structure.py:269](../doc_structure.py)）：僅 `cjk_comma`/`cjk_paren`。
+`is_heading_line`（[doc_structure.py:267](../doc_structure.py)）：裸號或任一 registry 規則命中。
+`is_standalone_section_heading`（[doc_structure.py:274](../doc_structure.py)）：僅 `cjk_comma`/`cjk_paren`。
 
 ---
 
-## 5. 目錄偵測：find_toc_regions（[doc_structure.py:461](../doc_structure.py)）
+## 5. 目錄偵測：find_toc_regions（[doc_structure.py:469](../doc_structure.py)）
 
 狀態機，回傳 `[(start_idx, end_idx)]`。
 
@@ -193,15 +193,15 @@ register_pattern_spec(HeadingPatternSpec(
   (d) `pattern_id == "decimal"` 時，首段數字必須 `≤ MAX_JUMP + 1`（=6，排除 `24410` 之類代碼）。
 - 文件結束仍在 TOC → 該段延伸到最後一行。
 
-`find_body_start_page`（[doc_structure.py:516](../doc_structure.py)）：回傳第一個非 dot-leader anchor
+`find_body_start_page`（[doc_structure.py:524](../doc_structure.py)）：回傳第一個非 dot-leader anchor
 所在頁（輔助用）。
 
-`filter_toc_and_noise`（[doc_structure.py:527](../doc_structure.py)）：剔除落在 TOC 行號集合內、或
+`filter_toc_and_noise`（[doc_structure.py:535](../doc_structure.py)）：剔除落在 TOC 行號集合內、或
 `is_noise_line` 為真的 candidate。
 
 ---
 
-## 6. 雜訊過濾：is_noise_line（[doc_structure.py:421](../doc_structure.py)）
+## 6. 雜訊過濾：is_noise_line（[doc_structure.py:426](../doc_structure.py)）
 
 對單一 candidate 的 `raw` / `title` / `pattern_id` 判斷，命中任一即丟棄：
 
@@ -210,22 +210,25 @@ register_pattern_spec(HeadingPatternSpec(
 3. **dot-leader 目錄列**：含 `[.．…]{3,}`。
 4. **無點目錄列**：`pattern_id == "decimal"` 且 title 以 `\s+\d+\s*$`（空白+數字）結尾，如 `1. 概論 1`。
 5. **圖表 caption**：`FIGURE_TABLE_RE = ^[圖表]\s*\d+([-.–]\d+)?\s*[：:]`。
-6. **單整數 decimal 的折行散文**（僅 `pattern_id == "decimal"` 且 num 為**單一整數**、不含小數點時）：
-   - title 含 `，` 或 `,` → 折行的子句（如 `1.如仍須…，應先獲輻射`）→ 雜訊；
-   - num 長度 > 1 且首位為 `0`（前導零，如 `001`、`004`）→ 非編號。
+6. **單整數 decimal 的前導零**（僅 `pattern_id == "decimal"` 且 num 為**單一整數**、不含小數點時）：
+   - num 長度 > 1 且首位為 `0`（前導零，如 `001`、`004`）→ 代碼/編號，非 anchor → 雜訊。
 
-> **anchor 模型的調整**：規則 6 **不再**因「title 以 `。！？` 結尾」就丟棄。
-> 在 anchor 模型下 `1. 協助督導。` 是合法的（深層）anchor —— 是否該細切由延遲切分決定，
-> 而非在偵測階段就排除。仍保留逗號折行、前導零的過濾。
-> 規則 4、6 只作用於 `pattern_id == "decimal"`；`paren_*`、`cjk_*` 不受影響。
+> **anchor 模型的調整**：規則 6 **不再**因「title 以 `。！？` 結尾」或「title 含逗號」就丟棄。
+> 在 anchor 模型下標號行只是 anchor candidate（**不分 list / section**）：`1. 協助督導。` 與
+> `1. 全國環境輻射監測…，提供…。` 都是合法（深層）anchor —— 是否重要、是否該細切由
+> level + 延遲切分決定，**不在偵測階段猜「散文 vs 清單」**。
+> **逗號過濾已整層移除**：它是舊「structural / enum」思維的殘留；法規清單項目幾乎都含逗號，
+> 舊版「含逗號就丟」會整條漏掉合法清單（曾導致 `（二）核安會` 下 `1./2./3.` 消失）。
+> 前導零過濾保留（與 list/section 之分無關）。規則 4、6 只作用於 `pattern_id == "decimal"`；
+> `paren_*`、`cjk_*` 不受影響。
 
 ---
 
-## 7. 表格偵測：find_table_regions（[doc_structure.py:582](../doc_structure.py)）
+## 7. 表格偵測：find_table_regions（[doc_structure.py:590](../doc_structure.py)）
 
 目的：表格內「裸整數列」(`1 文字`，無分隔符) 不可被當成 anchor。
 
-- **裸整數列判定** `_bare_integer_row`（[doc_structure.py:543](../doc_structure.py)）：以
+- **裸整數列判定** `_bare_integer_row`（[doc_structure.py:551](../doc_structure.py)）：以
   `get_spec("decimal").regex` 比對，但 num 無小數點、且 num 後緊跟的字元**不是**
   `.`/`．`/`、`（有分隔符＝真章節 `1.`，回傳 None）。
 - 把所有裸整數列依行號分群成 run，群內可容忍 `TABLE_GAP_TOLERANCE = 4` 行間隔（即行號差 `≤ 5`）。
@@ -236,11 +239,11 @@ register_pattern_spec(HeadingPatternSpec(
     區段起點往上含錨點行。
   - **獨立成表**：run 長度 `≥ TABLE_STANDALONE_MIN = 5`（無錨點也算）。
 
-`filter_table_regions`（[doc_structure.py:622](../doc_structure.py)）：剔除落在表格行號集合內的 candidate。
+`filter_table_regions`（[doc_structure.py:630](../doc_structure.py)）：剔除落在表格行號集合內的 candidate。
 
 ---
 
-## 8. 結構統計：analyze_structure_profile（[doc_structure.py:642](../doc_structure.py)）
+## 8. 結構統計：analyze_structure_profile（[doc_structure.py:650](../doc_structure.py)）
 
 對**所有** anchor（不分角色）一起統計，回傳 dict：
 - `pattern_counts`：各 `pattern_id` 次數。
@@ -272,12 +275,12 @@ register_pattern_spec(HeadingPatternSpec(
 
 ---
 
-## 9. anchor order 推斷：infer_anchor_order_by_evidence（[doc_structure.py:802](../doc_structure.py)）
+## 9. anchor order 推斷：infer_anchor_order_by_evidence（[doc_structure.py:810](../doc_structure.py)）
 
 > 對**所有** anchor（不分角色）一起排序。用**方向感知父子證據 + 拓樸排序**，不以首見順序為主，
 > 也不用全域 rank 加總（會讓中間層被它「身為某父層的子」的強邊拖到比更內層還深）。
 
-### 方向感知證據 `_evidence_scores`（[doc_structure.py:690](../doc_structure.py)）
+### 方向感知證據 `_evidence_scores`（[doc_structure.py:698](../doc_structure.py)）
 逐一掃描相鄰且 pattern 不同的轉換 `A → B`，用「B 是否延續自己的計數」決定方向：
 - **B 的值比 B 上一次出現大**（延續中的外層計數，如 `…2. （二）…`，`（二）` 接 `（一）`）
   → `B` 是外層 → `score[(B, A)] += 1`。
@@ -285,17 +288,17 @@ register_pattern_spec(HeadingPatternSpec(
   → `A` 是外層 → `score[(A, B)] += 1`。
 
 這直接區分「父層在子序列跑完後 resume」與「父層帶出第一個子」——兩者在單純鄰接計數下長得
-一模一樣，正是先前 decimal/cjk_paren 反序的根因。`_marker_value`（[doc_structure.py:731](../doc_structure.py)）
+一模一樣，正是先前 decimal/cjk_paren 反序的根因。`_marker_value`（[doc_structure.py:739](../doc_structure.py)）
 依 num_type 把標號轉成可比較的整數 tuple（cjk 用 `_cjk_to_int`、decimal 用小數點 tuple、
 latin 用字母序）。
 
-### 拓樸排序 `_topological_order`（[doc_structure.py:760](../doc_structure.py)）
+### 拓樸排序 `_topological_order`（[doc_structure.py:768](../doc_structure.py)）
 - 對每對 `(A,B)` 算淨證據 `net = score(A,B) − score(B,A)`；`net>0` → 加有向邊 `A→B`（A 外層）。
 - Kahn 演算法逐一取出「沒有未排父層」的節點（source）；多個 source 時用
   `tie_key = (registry priority index, first_seen)` 決定先後。
 - 若殘留環（無 source），釋放 tie_key 最小者打破，保證一定產生全序。
 
-### 信心值 `_order_confidence`（[doc_structure.py:746](../doc_structure.py)）
+### 信心值 `_order_confidence`（[doc_structure.py:754](../doc_structure.py)）
 最終順序中，與證據一致（外層在前）的分數占總證據的比例（0..1）。
 
 ### 為什麼能避免首見順序誤導 + 反序（對應測試）
@@ -306,12 +309,12 @@ latin 用字母序）。
   延續計數而正確記為 `cjk_paren→decimal`，不再誤記為 `decimal→cjk_paren` →
   `anchor_order = [cjk_comma, cjk_paren, decimal]`（confidence 1.0）。
 
-`_parent_child_evidence(cands, parent, child)`（[doc_structure.py:723](../doc_structure.py)）保留為單對
+`_parent_child_evidence(cands, parent, child)`（[doc_structure.py:731](../doc_structure.py)）保留為單對
 查詢的輔助函式（回傳 `_evidence_scores` 中該對的值）。
 
 ---
 
-## 10. 層級指定：infer_levels（[doc_structure.py:840](../doc_structure.py)）
+## 10. 層級指定：infer_levels（[doc_structure.py:848](../doc_structure.py)）
 
 純依 `profile["anchor_order"]` 指定 level（缺時用 `infer_anchor_order_by_evidence` 重算）：
 
@@ -334,7 +337,7 @@ latin 用字母序）。
 
 ---
 
-## 11. 序號連續性：validate_sequence（[doc_structure.py:916](../doc_structure.py)）
+## 11. 序號連續性：validate_sequence（[doc_structure.py:924](../doc_structure.py)）
 
 僅對 `is_decimal_chain_spec(pattern_id)` 為真者做檢查；CJK 與 paren_* 一律接受。
 
@@ -343,59 +346,71 @@ latin 用字母序）。
   或首次出現（last==0）且 `n ≤ MAX_JUMP + 1 (=6)` → 排除 `24410`、`1904`、`50` 之類跳號。
 - **子層（depth ≥ 2）**：parent prefix 必須已被接受；child 號碼須 `==1` 或在 MAX_JUMP 內遞增。
   parent 未接受 → 整個子節點拒絕（孤兒）。
+- **父層邊界重置**：以 `decimal_base_level` 記錄目前追蹤的 depth-1 decimal 所在 level；
+  之後遇到「比它更淺（level 較小）的非 decimal anchor」（代表換到另一個父層，如 `（二）核安會`、
+  `四、…`）即清空 `last_at_prefix` / `accepted_prefixes`。**避免序號計數跨父層外溢**——否則某段
+  清單若首項 `1.` 被上游濾掉，下一段的 `2./3.` 會因「接在前一段最後號碼之後」而連續性失敗被誤刪。
+  比 decimal 更深的內層 anchor（如 decimal 底下的 `paren_num`）不觸發重置。
 
-CJK 轉整數 `_cjk_to_int`（[doc_structure.py:907](../doc_structure.py)）僅 best-effort，支援 `十X`（十一…）
+CJK 轉整數 `_cjk_to_int`（[doc_structure.py:915](../doc_structure.py)）僅 best-effort，支援 `十X`（十一…）
 與個位加總；目前 validate_sequence **未**對 CJK 做連續性驗證（但 `_marker_value` 用它判斷
 anchor order 的計數延續）。
 
 ---
 
-## 12. 延遲切分：split_by_candidate_lines（[doc_structure.py:1121](../doc_structure.py)）
+## 12. 延遲切分：split_by_candidate_lines（[doc_structure.py:1155](../doc_structure.py)）
 
 由上而下遞迴 `_split_range(start, end, cands, stack)`。**延遲切分的停止條件**：
 
 ```
-token_count ≤ chunk_size 且 頂層 anchor 數 ≤ MAX_ANCHORS_PER_CHUNK(=6)
+token_count ≤ chunk_size
+且（頂層 anchor 數 ≤ MAX_ANCHORS_PER_CHUNK(=6)　或　token_count ≤ ANCHOR_SPLIT_MIN_RATIO(=0.5)·chunk_size）
 ```
 - 「頂層 anchor 數」= 範圍內 level 最小（最外層）的 anchor 個數，代表這一塊跨越幾個**最外層**
   區段（一個區段內含多少子項不算）。
+- **anchor 數上限是 token-aware**：只有當區塊「偏大」（token > `ANCHOR_SPLIT_MIN_RATIO·chunk_size`）時，
+  anchor 數超過 6 才強制往下切；**純項目多但 token 小**（≤ 一半 chunk_size）的區塊照樣整塊保留。
+  例：`（二）核安會` 下 `1.`–`7.` 共 7 項（>6）但只有 ~286 tokens（chunk_size=1000），不再被拆成
+  「`1.` 一塊、`2.`–`7.` 一塊」，而是整段留著（避免切碎後又被 repair 併回）。
 - **符合停止條件** → 整塊保留為一個 chunk（即使內部還有更深 anchor）。
-- **太大或頂層 anchor 太多** → 取目前最外層 anchor level 當切點切 segments：
+- **太大，或（偏大且頂層 anchor 太多）** → 取目前最外層 anchor level 當切點切 segments：
   - anchor 之前的前言區段（除非該區段僅含當前父 anchor 自己，則併入下一段）；
   - 每個 anchor 到下一個同級 anchor 之間為一段，遞迴往**下一層** anchor 切；
   - `stack`（祖先鏈）隨遞迴維護，供 metadata 的 anchor_path。
 - **太大且無 anchor 可切** → 才 fallback `RecursiveCharacterTextSplitter`
-  （`_fallback_docs`，[doc_structure.py:1193](../doc_structure.py)，並加 warning `fallback_splitter_used`）。
+  （`_fallback_docs`，[doc_structure.py:1221](../doc_structure.py)，並加 warning `fallback_splitter_used`）。
 
-token 計數 `_count_tokens`（[doc_structure.py:254](../doc_structure.py)）：有 tiktoken 用
+token 計數 `_count_tokens`（[doc_structure.py:259](../doc_structure.py)）：有 tiktoken 用
 `cl100k_base`，否則 `len//4` 近似。
 
 效果：
 - 「四、任務分工」整段若 token 不大、頂層只有它一個 anchor → **整塊保留**，不會把每個 `1.` 拆開。
+- 同父層下的長清單（如 `（二）核安會` 的 `1.`–`7.`）即使項目數 >6，只要 token 偏小也整塊保留。
 - 若太大 → 先切成 `（一）/（二）`，仍太大才用 `1.2.3.` 繼續切。
 
-`_make_doc`（[doc_structure.py:1163](../doc_structure.py)）：
+`_make_doc`（[doc_structure.py:1193](../doc_structure.py)）：
 - `page_start/end = min/max(pages)`（pages 只計非空、非 TOC 行的頁碼）。
 - `anchor_path = _make_anchor_path(stack)`（祖先鏈，含 `pattern_id`）。
 - `contained` = 該範圍內的 anchors。
-- → `_build_metadata`（帶入 `anchor_order_confidence` / `support_count` / warnings）。
+- → `_build_metadata`（只帶入 `warnings`；不再傳 confidence / support_count）。
 
 ---
 
-## 13. 小 chunk 修復：repair_small_chunks_docs（[doc_structure.py:1451](../doc_structure.py)）
+## 13. 小 chunk 修復：repair_small_chunks_docs（[doc_structure.py:1476](../doc_structure.py)）
 
-最多跑 3 輪（外層 [doc_structure.py:1546](../doc_structure.py)），直到數量不變。
+最多跑 3 輪（外層 [doc_structure.py:1572](../doc_structure.py)），直到數量不變。
 
 - 門檻 `min_tokens = max(80, chunk_size // 10)`；token `< min_tokens` 視為過小。
-- **合併優先序**（`_merge_tier_reason`，[doc_structure.py:1377](../doc_structure.py)）——挑最相關且合併後仍
+- **合併優先序**（`_merge_tier_reason`，[doc_structure.py:1403](../doc_structure.py)）——挑最相關且合併後仍
   `≤ chunk_size` 的鄰居（左右皆評估，同分優先右鄰）：
   1. `small_chunk_same_parent`：兩 chunk 的 breadcrumb 父路徑相同（如同屬 `四 > （一）`）。
   2. `small_chunk_same_top_anchor`：頂層 anchor 相同（一方無 anchor 也歸此類）。
   3. `small_chunk_cross_anchor`：跨頂層 anchor（**最後手段**，仍允許）。
-- 合併 metadata `_merge_metadata`（[doc_structure.py:1433](../doc_structure.py)）：`page_start/end` 取 min/max；
-  `structure_tree` 以 `_merge_trees`（[doc_structure.py:1402](../doc_structure.py)）依 `section_key` 遞迴聯集、
+- 合併 metadata `_merge_metadata`（[doc_structure.py:1459](../doc_structure.py)）：`page_start/end` 取 min/max；
+  `structure_tree` 以 `_merge_trees`（[doc_structure.py:1428](../doc_structure.py)）依 `section_key` 遞迴聯集、
   保序、deepcopy 不污染來源；`contained_sections` 由合併後的 tree 重算；warnings 聯集並加
-  `small_chunk_merged`；設 `merge_applied=True` + `merge_reason`。
+  `small_chunk_merged`（此 warning 即「曾合併」的唯一標記，不再輸出 `merge_applied` / `merge_reason`）。
+  `_merge_tier_reason` 仍回傳 tier + reason，但 reason 僅供挑選優先序、**不寫入 metadata**。
 
 > 用 `section_key`（含 `pattern_id`，非裸 `section_id`）做合併判定，避免
 > `一、`（`cjk_comma:一`）與 `（一）`（`cjk_paren:一`）碰撞。
@@ -404,7 +419,7 @@ token 計數 `_count_tokens`（[doc_structure.py:254](../doc_structure.py)）：
 
 ## 14. Metadata 欄位（最終輸出）
 
-每個 `Document.metadata`（`_build_metadata`，[doc_structure.py:1270](../doc_structure.py)）：
+每個 `Document.metadata`（`_build_metadata`，[doc_structure.py:1304](../doc_structure.py)）：
 
 ```jsonc
 {
@@ -418,27 +433,30 @@ token 計數 `_count_tokens`（[doc_structure.py:254](../doc_structure.py)）：
     "三、作業程序 > （二）一級開設 > 2. 進駐機關"
   ],
   "structure_tree": { ... },                 // 偵測到的結構樹（見下）
-  "heading_tree":   { ... },                 // = structure_tree（相容別名，同物件）
-  "structure_type": "anchor_based",
-  "split_strategy": "delayed_anchor_recursive",
-  "structure_confidence": 1.0,               // = anchor_order_confidence
-  "anchor_order_confidence": 1.0,
-  "anchor_order_support_count": 41,
-  "merge_applied": false,
-  "merge_reason": null,
   "warnings": []
 }
 ```
 
-> `chunk_index` 在 [doc_structure.py:1552](../doc_structure.py) 於所有合併完成後才寫入，確保連續。
-> `structure_tree` 是主欄位；`heading_tree` 為相容別名（指向同一物件）。
+> 這 **8 個欄位就是全部輸出**（含 `chunk_index`）。`chunk_index` 在
+> [doc_structure.py:1579](../doc_structure.py) 於所有合併完成後才寫入，確保連續。
 
 ### 語意定義（重要）
 - `contained_sections` **不再保證**都是正式章節；它是本 chunk 內「依標號規則偵測到的結構路徑」。
 - `structure_tree` **不是嚴格目錄樹**；它是依 anchor level 建立的文件結構樹。
 - 不要假設每個節點都是正式 heading。
 
-### structure_tree 節點（`_make_node`，[doc_structure.py:1000](../doc_structure.py)）
+### 已移除的診斷欄位（不再輸出）
+為了讓 metadata 精簡，以下欄位**已不再寫入**（先前曾輸出、下游無人使用）：
+`heading_tree`（structure_tree 的相容別名）、`structure_type`、`split_strategy`、
+`structure_confidence`、`anchor_order_confidence`、`anchor_order_support_count`、
+`merge_applied`、`merge_reason`。
+- 仍需 anchor order 信心 / 支持度時：看 `build_documents_from_pages` 回傳的 `structure_info`
+  （§0），那裡仍有 `anchor_order_confidence` / `anchor_order_support_count` 等診斷。
+- 是否發生過小 chunk 合併：看 `warnings` 是否含 `small_chunk_merged`（取代舊的
+  `merge_applied` / `merge_reason`）。
+- 內部仍以 `structure_tree` 進行合併（`_get_tree` 讀 `structure_tree`），不依賴上述欄位。
+
+### structure_tree 節點（`_make_node`，[doc_structure.py:1022](../doc_structure.py)）
 
 ```jsonc
 {
@@ -455,30 +473,35 @@ token 計數 `_count_tokens`（[doc_structure.py:254](../doc_structure.py)）：
 ```
 
 - **每個 anchor 都建節點**（沒有 structural/enum 的過濾）；節點**無 `role`、無 `kind`**。
-- `items` 為 **ordered list**，保留原文順序；dedup key = `(level, section_key)`。
+- `items` 為 **ordered list**，保留原文順序。
+- **去重為 per-parent（path-aware）**：用 stack 邊建樹邊比對，只有當「同一父節點底下已有相同
+  `section_key` 的兄弟」才合併（重用 `_find_child`）。**不可**用全域 `(level, section_key)` 去重——
+  那會把在不同父層下**重啟編號**的清單項目誤判為重複，例如 `1./2./3.` 各自底下重複出現的
+  `（1）（2）（3）`，會在第一組之後全被丟棄（只剩各父層編號唯一的尾巴如 `（4）`、`（5）`）。
 - 由 `_make_anchor_path`（祖先鏈）+ `contained`（本 chunk 內 anchors）共同建成
-  （`_build_structure_tree_meta`，[doc_structure.py:1064](../doc_structure.py)）。
+  （`_build_structure_tree_meta`，[doc_structure.py:1086](../doc_structure.py)）；per-parent 去重同時
+  正確處理 `anchor_path` 尾節點與 `contained` 首節點重疊（同 path）的情況。
 
-### section_key（[doc_structure.py:990](../doc_structure.py)）
+### section_key（[doc_structure.py:1012](../doc_structure.py)）
 ```python
 section_key = f"{pattern_id}:{marker['num']}"   # cjk_comma:三 / cjk_paren:二 / decimal:1
 ```
 
-### contained_sections（`_contained_sections_from_tree`，[doc_structure.py:1032](../doc_structure.py)）
+### contained_sections（`_contained_sections_from_tree`，[doc_structure.py:1054](../doc_structure.py)）
 - 從 tree DFS，輸出每個 **leaf** 的完整 breadcrumb（root→leaf）。
 - 無子節點的節點本身即 leaf（只含父節點時輸出單一 breadcrumb）。
-- label 格式 `_format_section_label`（[doc_structure.py:1015](../doc_structure.py)）：CJK marker 與 title
+- label 格式 `_format_section_label`（[doc_structure.py:1037](../doc_structure.py)）：CJK marker 與 title
   緊貼（`三、作業程序`）；arabic/latin marker 與 title 間加空白（`1. 開設時機`）。
 - 無 anchor → `[]`。
 
-### 標題清理 `_clean_title`（[doc_structure.py:980](../doc_structure.py)）
+### 標題清理 `_clean_title`（[doc_structure.py:1002](../doc_structure.py)）
 去掉標題尾端的 `：。！？`（label/句末符號），讓 `1. 協助督導。` 的 title 顯示為 `協助督導`；
 `raw` 仍保留完整原文。
 
 ### 來源字串 helpers
-- `build_source_ref(meta)`（[doc_structure.py:1307](../doc_structure.py)）：
+- `build_source_ref(meta)`（[doc_structure.py:1333](../doc_structure.py)）：
   `要點.pdf#p3#chunk8`（單頁）或 `要點.pdf#p3-p4#chunk8`（跨頁）。**不儲存**，動態產生。
-- `format_chunk_source(meta)`（[doc_structure.py:1323](../doc_structure.py)）：RAG / 摘要引用顯示用：
+- `format_chunk_source(meta)`（[doc_structure.py:1349](../doc_structure.py)）：RAG / 摘要引用顯示用：
   ```
   來源：境外核災處理作業要點.pdf，第 3 頁，chunk 8
   本段包含的結構路徑：
@@ -486,17 +509,21 @@ section_key = f"{pattern_id}:{marker['num']}"   # cjk_comma:三 / cjk_paren:二 
   ```
   跨頁顯示 `第 3–4 頁`；`contained_sections` 為空時省略「本段包含的結構路徑」區塊。
 
-### diagnostics / warnings
-- `structure_type` 固定 `"anchor_based"`；`split_strategy` 固定 `"delayed_anchor_recursive"`。
-- `structure_confidence` = `anchor_order_confidence`（本 chunk 結構的信任度）。
-- 可能 warnings：`fallback_splitter_used`（該 chunk 由字元切分產生）、
-  `low_anchor_order_support`（文件級：`anchor_order_support_count < MIN_ANCHOR_SUPPORT` 且
-  anchor 種類 > 1）、`small_chunk_merged`（由 repair 合併而來）。
+### warnings
+metadata 唯一的診斷欄位即 `warnings`（list）。可能值：
+- `fallback_splitter_used`：該 chunk 由字元切分（`RecursiveCharacterTextSplitter`）產生。
+- `low_anchor_order_support`：文件級——`anchor_order_support_count < MIN_ANCHOR_SUPPORT` 且 anchor 種類 > 1。
+- `small_chunk_merged`：由 repair 合併而來（取代舊的 `merge_applied` / `merge_reason`）。
+
+> anchor order 的 `structure_type` / `split_strategy` / 信心值 / 支持度等不再進 metadata；
+> 需要時改看 `structure_info`（§0，`build_documents_from_pages` 的第二個回傳值）。
 
 ### 已淘汰欄位 / 名稱
 metadata 不再輸出：`kind`、`role`、`heading_path`、`breadcrumb`、`top_breadcrumb`、
 `start_heading`、`contains_sections`、`contains_headings`、`primary_section_path`、`style`、
-`source_ref`。原始碼也已移除：`HEADING_PATTERNS`、`_PATTERN_BY_NAME`、`_NUM_TYPE_BY_PATTERN`、
+`source_ref`，以及精簡後移除的 `heading_tree`、`structure_type`、`split_strategy`、
+`structure_confidence`、`anchor_order_confidence`、`anchor_order_support_count`、
+`merge_applied`、`merge_reason`。原始碼也已移除：`HEADING_PATTERNS`、`_PATTERN_BY_NAME`、`_NUM_TYPE_BY_PATTERN`、
 `heading_kind()`、`_TREE_KINDS`、`_ENUM_KINDS`、`ROLE_STRUCTURAL` / `ROLE_ENUM`、
 `structural_pattern_ids()` / `enum_pattern_ids()`、`DEFAULT_STYLE_ORDER`、
 `infer_style_order_by_evidence`（改名 `infer_anchor_order_by_evidence`）、profile 的
@@ -508,7 +535,8 @@ metadata 不再輸出：`kind`、`role`、`heading_path`、`breadcrumb`、`top_b
 
 | 常數 | 值 | 用途 |
 |---|---|---|
-| `MAX_ANCHORS_PER_CHUNK` | 6 | 延遲切分：頂層 anchor 數超過即繼續往下切（建議 5–8） |
+| `MAX_ANCHORS_PER_CHUNK` | 6 | 延遲切分：區塊偏大時頂層 anchor 數超過即繼續往下切（建議 5–8） |
+| `ANCHOR_SPLIT_MIN_RATIO` | 0.5 | anchor 數上限的 token 門檻；token ≤ 此比例·chunk_size 的小區塊不因 anchor 數而切 |
 | `MIN_ANCHOR_SUPPORT` | 3 | 低於此父子證據量 → `low_anchor_order_support` warning |
 | `MIN_MULTI_DECIMAL` | 3 | `has_decimal` 門檻（多層 decimal 數） |
 | `MIN_DEPTH_SUPPORT` | 2 | 某深度要計入 `max_decimal_depth` 的最少出現次數 |
@@ -531,13 +559,18 @@ metadata 不再輸出：`kind`、`role`、`heading_path`、`breadcrumb`、`top_b
    但仍依賴「下一個標號是否延續自己計數」這個局部訊號。樣本極少、或父層與子層計數行為相似的
    極端文件仍可能誤排。`anchor_order_confidence` + `anchor_order_support_count` 可作為信任度指標
    （並會觸發 `low_anchor_order_support` warning）。
-3. **`MAX_ANCHORS_PER_CHUNK` 用「頂層 anchor 數」**：能避免把一段多項清單炸成大量碎塊，但也意味
-   一個區段內即使有很多子項也不會因 anchor 數而切——只由 token 大小決定。閾值（6）為經驗值。
-4. **單整數 decimal 仍可能誤收**：放寬 `。！？` 結尾的過濾後，散文型 `1. 句子。` 會被當 anchor
-   （成為深層節點）。多半無害（延遲切分不會因此爆切），但 `contained_sections` 可能多出雜訊路徑；
-   仍靠逗號、前導零、表格、TOC 過濾把關。
+3. **`MAX_ANCHORS_PER_CHUNK` 用「頂層 anchor 數」且 token-aware**：anchor 數上限只在區塊「偏大」
+   （token > `ANCHOR_SPLIT_MIN_RATIO·chunk_size`）時才強制往下切；token 偏小的長清單整段保留，
+   避免切碎後又被 repair 併回（曾導致 `（二）核安會` 的 `1.` 與 `2.`–`7.` 被分到兩段）。閾值
+   6 與 0.5 皆為經驗值；調高 ratio → 更傾向保留大區塊，調低 → 更早因 anchor 數而切。
+4. **單整數 decimal 仍可能誤收**：偵測階段不再用 `。！？` 結尾或逗號來猜「散文 vs 清單」
+   （§6 規則 6 已整層移除逗號過濾），散文型 `1. 句子。`、`1.如仍須…，應先獲…` 都會被當 anchor
+   （成為深層節點）。這是 anchor 模型的刻意取捨：寧可多收（多半無害——延遲切分不會因此爆切，
+   只是 `contained_sections` 可能多出雜訊路徑），也不要漏掉大量含逗號的合法清單。
+   仍靠前導零、表格、TOC 過濾把關。
 5. **僅 decimal_chain 做序號連續性驗證**：CJK / paren_* 無 `validate_sequence`，亂序或誤判的
-   CJK anchor 不會被剔除。
+   CJK anchor 不會被剔除。decimal 的連續性計數現會在父層邊界重置（§11），不再跨父層外溢；
+   但同一父層內若首項缺失且該段只剩 `2./3.`，仍依「首次出現 `≤ MAX_JUMP+1`」規則接受。
 6. **unwrap 可能誤併**：非句末結尾的內文行會被併入前行；若 OCR 漏標點，chunk 邊界與
    anchor title 可能被汙染。
 7. **TOC 偵測依賴標題詞 + dot-leader**：無「目錄」標題或無點引導的目錄頁可能漏判；
@@ -560,15 +593,15 @@ metadata 不再輸出：`kind`、`role`、`heading_path`、`breadcrumb`、`top_b
 - `TestContainedSections`：三情境 breadcrumb。
 - `TestStructureTreeShape`：list items、`section_key`/`pattern_id`、title 去標點、
   **整棵樹無 `kind`、無 `role`**、無舊欄位。
-- `TestMergeTrees`：依 `section_key` 合併保序、不污染來源、`merge_applied`。
+- `TestMergeTrees`：依 `section_key` 合併保序、不污染來源、warnings 含 `small_chunk_merged`（無 `merge_applied`）。
 - `TestSourceFormatting`：`build_source_ref` 單/跨頁、`format_chunk_source`（含「本段包含的結構路徑」）。
 - `TestNoRoleDependency`：profile 有 `anchor_order`、無 `structural_order`/`enum_order`/`style_order`；
   candidate 無 `role` 屬性。
 - `TestAllMarkersAreAnchors`：cjk_comma/cjk_paren/decimal 皆被偵測；decimal 與 paren_num 都進 tree。
 - `TestDelayedSplitting`：大 chunk_size 保留整塊；小 chunk_size 先切 `（一）/（二）` 而非每個 `1.`。
-- `TestStructureTreeMetadata`：`contained_sections` + `structure_tree` + `structure_type`；
-  `structure_tree` 為主、`heading_tree` 為別名。
-- `TestNoTinyChunkFlood`：MapReduce 友善——無大量極短 chunk；合併者帶合法 `merge_reason`。
+- `TestStructureTreeMetadata`：`contained_sections` + `structure_tree`；並驗證 metadata 為精簡
+  8 欄位集合（無 `heading_tree` / `structure_type` / `split_strategy` / `merge_*` 等診斷欄）。
+- `TestNoTinyChunkFlood`：MapReduce 友善——無大量極短 chunk；合併者於 `warnings` 帶 `small_chunk_merged`。
 - `TestAnchorOrderEvidence`：內層 pattern 先出現不誤導；父子證據勝過 first_seen；
   **計數重啟的內層不被誤判為外層**（對應真實 PDF 反序 bug 的迴歸測試）。
 - `TestPatternRegistry`：runtime 註冊 `article_cjk`（`第十條`）可被偵測、marker 正確、可反註冊。
